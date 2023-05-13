@@ -2,9 +2,7 @@ import logging
 import sys
 import os
 import torch
-import json
 from typing import Optional, Tuple, Union, List, Callable
-from transformers import LlamaForCausalLM
 from transformers.generation.logits_process import LogitsProcessor
 from transformers.generation.beam_search import BeamSearchScorer
 from transformers.deepspeed import is_deepspeed_zero3_enabled
@@ -29,12 +27,9 @@ from huggingface_hub import hf_hub_download
 from accelerate import dispatch_model, infer_auto_device_map
 from peft.utils import PeftType, set_peft_model_state_dict
 
-def printf(*args,**kargs):
+def printf(*args):
     if os.environ.get('DEBUG',False):
-        end = '\n'
-        if 'end' in kargs:
-            end = kargs['end']
-        print(*args, end=end, flush=True)
+        print('>>> ', *args)
 
 class ColorFormatter(logging.Formatter):
 
@@ -71,7 +66,7 @@ def set_console_logger(name):
 
 def set_file_logger(name, dir, use_console=False):
     logger = logging.getLogger(name)
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     os.makedirs(dir, exist_ok=True)
 
     if use_console:
@@ -88,20 +83,15 @@ def set_file_logger(name, dir, use_console=False):
     return logger
 
 def to_jsonl(data, path):
-    with open(path, 'a') as f:
+    with open(path, 'w') as f:
         for line in data:
             f.write(json.dumps(line,ensure_ascii=False)+'\n')
 
-def from_json(path):
-    return json.load(open(path))
-
 def from_jsonl(path):
     return [json.loads(line) for line in open(path, 'r') ]
-
-def to_json(data, path):
-    json.dump(data, open(path, 'w'), ensure_ascii=False)
-
-class StreamGenerationMixin(GenerationMixin):
+        
+        
+class SteamGenerationMixin(PeftModelForCausalLM, GenerationMixin):
     # support for streamly generation
     # TODO: group_beam_search
     @torch.no_grad()
@@ -116,6 +106,7 @@ class StreamGenerationMixin(GenerationMixin):
         ] = None,
         **kwargs,
     ):
+        self._reorder_cache = self.base_model._reorder_cache
         if is_deepspeed_zero3_enabled() and dist.world_size() > 1:
             synced_gpus = True
         else:
@@ -254,7 +245,7 @@ class StreamGenerationMixin(GenerationMixin):
 
         if is_greedy_gen_mode:
             # 11. run greedy search
-            return self.stream_greedy_search(
+            return self.greedy_search(
                 input_ids,
                 logits_processor,
                 stopping_criteria,
@@ -270,7 +261,7 @@ class StreamGenerationMixin(GenerationMixin):
                 is_encoder_decoder=self.config.is_encoder_decoder,
                 **model_kwargs,
             )
-            return self.stream_sample(
+            return self.sample(
                 generation_config,
                 input_ids,
                 logits_processor,
@@ -280,7 +271,7 @@ class StreamGenerationMixin(GenerationMixin):
                 **model_kwargs,
             )
         elif is_beam_gen_mode:
-            return self.stream_beam_search(
+            return self.beam_search(
                 generation_config,
                 input_ids,
                 logits_processor,
@@ -290,7 +281,7 @@ class StreamGenerationMixin(GenerationMixin):
             )
         elif is_beam_sample_gen_mode:
             # interleave input_ids with `num_beams` additional sequences per batch
-            return self.stream_beam_sample(
+            return self.beam_sample(
                 input_ids,
                 logits_processor,
                 logits_warper,
@@ -302,7 +293,7 @@ class StreamGenerationMixin(GenerationMixin):
         else:
             raise Exception('not implement')
         
-    def stream_sample(
+    def sample(
         self,
         generation_config,
         input_ids,
@@ -379,7 +370,7 @@ class StreamGenerationMixin(GenerationMixin):
                     this_peer_finished = True
         yield input_ids
 
-    def stream_beam_sample(
+    def beam_sample(
         self,
         input_ids,
         logits_processor,
@@ -514,7 +505,7 @@ class StreamGenerationMixin(GenerationMixin):
         )
         yield sequence_outputs["sequences"]
 
-    def stream_greedy_search(
+    def greedy_search(
         self,
         input_ids,
         logits_processor,
@@ -589,7 +580,7 @@ class StreamGenerationMixin(GenerationMixin):
                     this_peer_finished = True
         yield input_ids
 
-    def stream_beam_search(
+    def beam_search(
         self,
         generation_config,
         input_ids,
@@ -598,7 +589,6 @@ class StreamGenerationMixin(GenerationMixin):
         synced_gpus,
         **model_kwargs,
     ):
-
         # 10. go into beam search generation modes
         # 11. prepare beam search scorer
         bos_token_id, eos_token_id, pad_token_id = (
@@ -639,7 +629,6 @@ class StreamGenerationMixin(GenerationMixin):
         beam_scores = beam_scores.view((batch_size * num_beams,))
         this_peer_finished = False  # used by synced_gpus only
         while True:
-
             if synced_gpus:
                 # Under synced_gpus the `forward` call must continue until all gpus complete their sequence.
                 # The following logic allows an early break if all peers finished generating their sequence
@@ -734,11 +723,6 @@ class StreamGenerationMixin(GenerationMixin):
         )
         yield final_result["sequences"]
 
-class StreamLlamaForCausalLM(LlamaForCausalLM, StreamGenerationMixin):
-    pass
-
-class StreamPeftGenerationMixin(PeftModelForCausalLM, StreamGenerationMixin):
-
     # default it call `model = MODEL_TYPE_TO_PEFT_MODEL_MAPPING[config.task_type](model, config)`, not cls!! so inherent PeftModelForCausalLM is no sense
     @classmethod
     def from_pretrained(cls, model, model_id, **kwargs):
@@ -750,7 +734,7 @@ class StreamPeftGenerationMixin(PeftModelForCausalLM, StreamGenerationMixin):
 
         # here is the hack
         model = cls(model, config)
-        model._reorder_cache = model.base_model._reorder_cache
+
         # load weights if any
         if os.path.exists(os.path.join(model_id, "adapter_model.bin")):
             filename = os.path.join(model_id, "adapter_model.bin")
