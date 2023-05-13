@@ -6,7 +6,7 @@ import gradio as gr
 import argparse
 import warnings
 import os
-from utils import StreamPeftGenerationMixin,StreamLlamaForCausalLM
+from utils import SteamGenerationMixin
 assert (
     "LlamaTokenizer" in transformers._import_structure["models.llama"]
 ), "LLaMA is now in HuggingFace's main branch.\nPlease reinstall it: pip uninstall transformers && pip install git+https://github.com/huggingface/transformers.git"
@@ -14,7 +14,7 @@ from transformers import LlamaTokenizer, LlamaForCausalLM, GenerationConfig
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--model_path", type=str, default="/model/13B_hf")
-parser.add_argument("--lora_path", type=str, default="checkpoint-3000")
+parser.add_argument("--lora_path", type=str, default="/home/tianjie/Documents/DialogueGeneration/trl/checkpoint/checkpoint-3000")
 parser.add_argument("--use_typewriter", type=int, default=1)
 parser.add_argument("--use_local", type=int, default=1)
 args = parser.parse_args()
@@ -58,7 +58,7 @@ if device == "cuda":
         torch_dtype=torch.float16,
         device_map={"": 0},
     )
-    model = StreamPeftGenerationMixin.from_pretrained(
+    model = SteamGenerationMixin.from_pretrained(
         model, LORA_WEIGHTS, torch_dtype=torch.float16, device_map={"": 0}
     )
 elif device == "mps":
@@ -67,7 +67,7 @@ elif device == "mps":
         device_map={"": device},
         torch_dtype=torch.float16,
     )
-    model = StreamPeftGenerationMixin.from_pretrained(
+    model = SteamGenerationMixin.from_pretrained(
         model,
         LORA_WEIGHTS,
         device_map={"": device},
@@ -77,7 +77,7 @@ else:
     model = LlamaForCausalLM.from_pretrained(
         BASE_MODEL, device_map={"": device}, low_cpu_mem_usage=True
     )
-    model = StreamPeftGenerationMixin.from_pretrained(
+    model = SteamGenerationMixin.from_pretrained(
         model,
         LORA_WEIGHTS,
         device_map={"": device},
@@ -196,6 +196,6 @@ gr.Interface(
             label="Output",
         )
     ],
-    title="Chinese-Vicuna 中文小羊驼",
-    description="中文小羊驼由各种高质量的开源instruction数据集，结合Alpaca-lora的代码训练而来，模型基于开源的llama7B，主要贡献是对应的lora模型。由于代码训练资源要求较小，希望为llama中文lora社区做一份贡献。",
+    title="Chinese-Vicuna Xinhai Mining",
+    description="Xinhai Minig Testing GPT Project-Hello Mining World!",
 ).queue().launch(share=True)
